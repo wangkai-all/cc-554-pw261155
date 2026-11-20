@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>保养事件离线补传演示</title>
+<style>
+  body { font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif; margin: 24px; color: #1f2933; }
+  h1 { font-size: 20px; }
+  .bar { margin: 12px 0; }
+  button { margin: 4px 8px 4px 0; padding: 8px 14px; border: 1px solid #94a3b8; border-radius: 6px;
+           background: #f8fafc; cursor: pointer; font-size: 14px; }
+  button:hover { background: #e2e8f0; }
+  button.primary { background: #2563eb; border-color: #2563eb; color: #fff; }
+  button.primary:hover { background: #1d4ed8; }
+  #evidence { background: #0f172a; color: #e2e8f0; padding: 12px; border-radius: 8px;
+              white-space: pre-wrap; word-break: break-all; font-size: 12px; max-height: 320px; overflow: auto; }
+  table { border-collapse: collapse; margin-top: 12px; font-size: 13px; }
+  th, td { border: 1px solid #cbd5e1; padding: 6px 10px; text-align: left; }
+  th { background: #f1f5f9; }
+  .blocked_missing_start { color: #b91c1c; font-weight: 600; }
+  .reviewed { color: #15803d; font-weight: 600; }
+  .completed { color: #1d4ed8; }
+  .hint { color: #64748b; font-size: 13px; }
+  #history { font-size: 12px; color: #475569; margin-top: 12px; }
+  #history li { margin: 2px 0; }
+</style>
+</head>
+<body>
+<h1>工位保养事件：离线缓存 → 上线补传 → 工单回执</h1>
+<p class="hint">
+  场景：控制器离线缓存 6 条事件（WO-1001/WO-1002 的开始、结束、复核）。上线后按不同大小（2 条、4 条）组包补传，
+  第二包丢失 seq=3（WO-1002 的开始事件）。接收端只确认已持久化序号（高水位 + 缺口），
+  工单端不得跨过缺的开始事件把结束定为已完成；复核回退后重发的旧包会被识别为旧状态。
+</p>
+
+<div class="bar">
+  <button class="primary" id="btn-lossy">接收不连续保养包</button>
+  <button class="primary" id="btn-fill">补齐开始事件</button>
+  <button class="primary" id="btn-receipts">查看工单回执</button>
+  <button id="btn-rollback">复核回退 WO-1001</button>
+  <button id="btn-resend">重发旧包（WO-1001 复核）</button>
+  <button id="btn-reset">重置样例</button>
+</div>
+
+<h2>工单状态</h2>
+<table id="orders">
+  <thead><tr><th>工单</th><th>状态</th><th>版本</th><th>已应用序号</th><th>说明</th></tr></thead>
+  <tbody><tr><td colspan="5">尚未操作</td></tr></tbody>
+</table>
+
+<h2>业务结果区</h2>
+<pre id="evidence" data-evidence-result="init">（尚未操作，点击上方按钮）</pre>
+
+<ul id="history"></ul>
+
+<script>
+const evidence = document.getElementById('evidence');
+const historyEl = document.getElementById('history');
+
+async function call(url, label) {
+  const before = evidence.getAttribute('data-evidence-result');
+  const res = await fetch(url, { method: url === '/api/receipts' ? 'GET' : 'POST',
+                                 headers: { 'Content-Type': 'application/json' }, body: url === '/api/receipts' ? undefined : '{}' });
+  const data = await res.json();
+  const compact = JSON.stringify(data);
+  evidence.textContent = JSON.stringify(data, null, 2);
+  evidence.setAttribute('data-evidence-result', compact);
+  const li = document.createElement('li');
+  li.textContent = `${new Date().toLocaleTimeString()} ${label}：结果区已由 ${before.slice(0, 60)}… 更新为 ${compact.slice(0, 60)}…`;
+  historyEl.prepend(li);
+  if (data.orders) renderOrders(data.orders);
+  return data;
+}
+
+function renderOrders(orders) {
+  const tbody = document.querySelector('#orders tbody');
+  tbody.innerHTML = '';
+  for (const o of orders) {
+    const tr = document.createElement('tr');
+    tr.innerHTML = `<td>${o.orderId}</td>
+      <td class="${o.status}">${o.status}</td>
+      <td>v${o.currentVersion}</td>
+      <td>${(o.appliedSeqs || []).join(', ')}</td>
+      <td>${o.note || ''}</td>`;
+    tbody.appendChild(tr);
+  }
+  if (orders.length === 0) tbody.innerHTML = '<tr><td colspan="5">暂无工单</td></tr>';
+}
+
+document.getElementById('btn-lossy').onclick = () => call('/api/receive-lossy', '接收不连续保养包');
+document.getElementById('btn-fill').onclick = () => call('/api/fill-start', '补齐开始事件');
+document.getElementById('btn-receipts').onclick = () => call('/api/receipts', '查看工单回执');
+document.getElementById('btn-rollback').onclick = () => call('/api/rollback', '复核回退');
+document.getElementById('btn-resend').onclick = () => call('/api/resend-old', '重发旧包');
+document.getElementById('btn-reset').onclick = () => call('/api/reset', '重置样例');
+</script>
+</body>
+</html>
